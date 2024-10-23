@@ -1,0 +1,184 @@
+---
+output:
+  word_document: default
+  pdf_document: default
+header-includes: \pagenumbering{gobble}
+---
+
+```{r, echo=FALSE, warning=FALSE, message = FALSE}
+library(forecast)
+library(randomForest)
+library(astsa)
+library(dplyr)
+library(xtable)
+```
+
+RANDOM FOREST: SERIES DE TIEMPO
+
+
+Modelar una serie de tiempo con Random Forest tiene algunas ventajas:
+
+No Requiere Supuestos de Linealidad: A diferencia de los modelos de series de tiempo tradicionales como ARIMA, Random Forest no asume linealidad en los datos. Esto significa que puede capturar relaciones no lineales y complejas entre las variables de entrada y la serie de tiempo.
+
+Manejo de Variables de Entrada: Si tienes múltiples variables de entrada que podrían estar relacionadas con la serie de tiempo, Random Forest puede manejarlas de manera efectiva y capturar interacciones complejas entre ellas.
+
+Robustez ante Valores Atípicos: Random Forest es robusto ante valores atípicos en los datos, lo que puede ser útil en series de tiempo que pueden contener observaciones extremas.
+
+
+```{r, echo=FALSE, include=FALSE}
+gas<-read.csv("C:/Users/compu/OneDrive/Documents/machine/tarea2/gas.csv", header = TRUE,  sep = ",", dec = ".")
+gasss<-ts(gas$value,start = c(1960,1), frequency = 4)
+gas.test<-ts(gas$value[97:108],start = c(1984,1), end= c(1986,4), frequency = 4)
+#Training
+gas.train<-ts(gas$value[1:96],start = c(1960,1), end= c(1983,4), frequency = 4)
+
+autoplot(gas.train, ,main="Consumo trimestral de gas en Timbuktu de 1960 a 1986")+
+  autolayer(gas.test)
+```
+Random Forest  es un algoritmo de aprendizaje supervisado, por lo cual se requiere de un conjunto de datos en donde cada entrada (conjunto de características) tiene una etiqueta correspondiente (valor objetivo).
+
+Una serie de tiempo esta compuesta de los valores a lo largo de un periodo de tiempo por lo que para poder predecir nuevos valores, requerimos de un conjunto de caracteristicas que podamos asociar al valor objetivo. Para obtener el conjunto de características a asociar al modelo se puede tomar los datos de la misma serie con algun retraso, tomando la idea de los modelos ARMA de que existe correlación entre los valores de la serie de tiempo.
+
+Para contruir la base de datos para modelar el consumo trimestral de gas en Timbuktu de 1960 a 1986 se realizarón 4 retrasos, la base de datos quedo de la siguiente forma:
+
+```{r, echo=FALSE}
+gas<-gas$value
+gas_lag<-data.frame(year= seq(from = 1960, to = 1986.75, by = 0.25), value=gas,
+                     lag1=lag(gas, 1),
+                      lag2=lag(gas, 2),
+                       lag3=lag(gas, 3),
+                       lag4=lag(gas, 4))
+ head(gas_lag)
+gas.tt<-gas_lag[97:108, ]
+gas.tr<-na.omit(gas_lag[1:96, ])
+```
+A partir de esa base de datos se dividieron los datos en datos de entrenamiento (1960-1983) y datos de prueba (1984-1986), y a partir de los datos de entrenamiento se modelo un Random Forest con 200 arboles y una cantidad minima de 2 en cada nuevo grupo que se forme, además se eliminaron los primeros 4 datos debido a que llevar a cabo los retrasos genera NA.
+```{r, echo=FALSE}
+rf<-randomForest(value ~. , data= gas.tr, importance=TRUE, mtyr=2, ntree=200  )
+rf
+```
+La siguiente gráfica muestra los datos reales y los datos ajustados de acuerdo al modelo, además el % de la varianza explicada por el modelo es 93.04%. 
+
+```{r, echo=FALSE, warning=FALSE}
+predtr<-predict(rf,gas.tr[, -c(2)])
+predtr<-ts(predtr,start = c(1960,1), end= c(1983,4), frequency = 4)
+autoplot (gas.train, main="Fitted vs real-Random Forest", sub="Base de entrenamiento")+ autolayer(predtr, series= "RF pred")
+```
+Para llevar a cabo la comparación de la predicción de los datos de prueba y los reales, se contruyo una función de aprendizaje continuo, ya que al predecir un valor, genera un nuevo modelo que incluye al valor predicho, y que se usa para predecir el siguiente valor.
+
+```{r, warning=FALSE}
+hist<-gas.tr
+pred<-NULL
+year_1<-1984
+a=c()
+i=0
+
+temp1<-gas.tr$value[gas.tr$year==(year_1-0.25)]
+temp2<-gas.tr$lag1[gas.tr$year==(year_1-0.25)]
+temp3<-gas.tr$lag2[gas.tr$year==(year_1-0.25)]
+temp4<-gas.tr$lag3[gas.tr$year==(year_1-0.25)]
+for (i in 0:length(gas.tt$value)) {
+  x=cbind(year=year_1+(i/4),
+  lag1=temp1,
+  lag2=temp2,
+  lag3=temp3,
+  lag4=temp4)
+  pred= predict(rf, x)
+  a=c(year_1+(i/4), pred, temp1,temp2, temp3, temp4)
+  hist=rbind( hist, a)
+ rf<-randomForest(value ~. , data= hist, importance=TRUE, mtyr=2, ntree=200  )
+temp4=temp3
+temp3=temp2
+temp2=temp1
+temp1=pred
+  
+}
+```
+Esta gráfica muestra las predicciones que realiza el modelo para los datos de prueba.
+
+```{r, echo=FALSE, warning=FALSE}
+pred<-ts(hist$value[93:104], start = c(1984,1), frequency = 4) 
+real<-ts(gas.tt$value, start = c(1984,1), frequency = 4)
+autoplot (real, main="Fitted vs real-Random Forest", sub="Base de prueba")+ autolayer(pred, series= "RF pred")
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+mape <- round(mean(abs((real - pred) / real)) * 100,2)
+rmse <- round(sqrt(mean((real - pred)^2)),2)
+mae<-round(sum(abs(real-pred))/12,2)
+xtable(rbind(c("mape","rmse","mae"),c(mape,rmse, mae)))
+```
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\begin{tabular}{rlll}
+  \hline
+ & 1 & 2 & 3 \\ 
+  \hline
+1 & mape & rmse & mae \\ 
+  2 & 26.32 & 233.58 & 181.17 \\ 
+   \hline
+\end{tabular}
+\end{table}
+
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+mape <- round(mean(abs((real - pred) / real)) * 100,2)
+rmse <- round(sqrt(mean((real - pred)^2)),2)
+mae<-round(sum(abs(real-pred))/12,2)
+xtable(rbind(c("mape","rmse","mae"),c(mape,rmse, mae)))
+```
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\begin{tabular}{rlll}
+  \hline
+ & 1 & 2 & 3 \\ 
+  \hline
+1 & mape & rmse & mae \\ 
+  2 & 26.32 & 233.58 & 181.17 \\ 
+   \hline
+\end{tabular}
+\end{table}
+
+```
+
+```{r, warning=FALSE, eacho=FALSE}
+hist<-na.omit(gas_lag)
+hist
+pred<-NULL
+year_1<-1987
+a=c()
+i=0
+
+temp1<-gas.tr$value[gas.tr$year==(year_1-0.25)]
+temp2<-gas.tr$lag1[gas.tr$year==(year_1-0.25)]
+temp3<-gas.tr$lag2[gas.tr$year==(year_1-0.25)]
+temp4<-gas.tr$lag3[gas.tr$year==(year_1-0.25)]
+for (i in 0:12) {
+  x=cbind(year=year_1+(i/4),
+          lag1=temp1,
+          lag2=temp2,
+          lag3=temp3,
+          lag4=temp4)
+  pred= predict(rf, x)
+  a=c(year_1+(i/4), pred, temp1,temp2, temp3, temp4)
+  hist=rbind( hist, a)
+  rf<-randomForest(value ~. , data= hist, importance=TRUE, mtyr=2, ntree=200  )
+  temp4=temp3
+  temp3=temp2
+  temp2=temp1
+  temp1=pred
+  
+}
+pred3<-ts(hist$value[108:117] , start = c(1987,1), frequency = 4)
+autoplot (gasss, main="Predicciones de 1987-1989")+
+  autolayer(pred3, series= "RF pred")
+
+```
+
+
+
